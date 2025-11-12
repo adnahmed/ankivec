@@ -1,6 +1,6 @@
 {
-  "model_name": "nomic-embed-text",
-  "search_results_limit": 50,
+  "model_name": "snowflake-arctic-embed",
+  "search_results_limit": 10,
   "batch_size": 10,
   "ollama_host": "http://localhost:11434"
 }

@@ -2,10 +2,7 @@ import sys
 import os
 import sqlite3
 from pathlib import Path
-from typing import List, Tuple
-from typing_extensions import Iterator
 import itertools
-from types import MethodType
 
 try:
     from aqt import mw, gui_hooks
@@ -41,10 +38,14 @@ class VectorEmbeddingManager:
         self._sync()
 
     def _init_tables(self):
+        self.db.execute("drop table ankivec_vec")
+        self.db.execute("drop table ankivec_metadata")
+        self.conn.commit()
+
         self.db.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS ankivec_vec USING vec0(
                 note_id INTEGER PRIMARY KEY,
-                embedding float[768]
+                embedding float[1024] distance_metric=cosine
             )
         """)
         self.db.execute("""
@@ -88,7 +89,8 @@ class VectorEmbeddingManager:
         processed = 0
         for batch in itertools.batched(notes, 128):
             note_ids, card_text = zip(*batch)
-            embeddings = ollama.embed(model=self.model_name, input=card_text)["embeddings"]
+            joined_text = [" ".join(c.split(chr(0x1f))) for c in card_text]
+            embeddings = ollama.embed(model=self.model_name, input=joined_text)["embeddings"]
 
             for note_id, embedding in zip(note_ids, embeddings):
                 self.db.execute(
@@ -104,34 +106,25 @@ class VectorEmbeddingManager:
         self.conn.commit()
 
     def search(self, query: str, n_results: int = 20) -> List[int]:
-        query_embedding = ollama.embed(model=self.model_name, input=query)["embeddings"][0]
-        query_str = str(query_embedding)
+        embedding = ollama.embed(model=self.model_name, input='query: ' + query)["embeddings"][0]
 
         self.db.execute(
-            "SELECT note_id FROM ankivec_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
-            (query_str, n_results)
+            "SELECT note_id FROM ankivec_vec WHERE embedding MATCH ? and k = ?",
+            (serialize_float32(embedding), n_results)
         )
         results = self.db.fetchall()
 
         return [row[0] for row in results]
 
-    def note_ids_to_card_ids(self, note_ids: List[int]) -> List[int]:
-        if not note_ids:
-            return []
-        placeholders = ','.join('?' * len(note_ids))
-        self.db.execute(f"SELECT id FROM cards WHERE nid IN ({placeholders})", note_ids)
-        return [row[0] for row in self.db.fetchall()]
-
-def wrap_vec_search(txt):
+def wrap_vec_search(txt, n):
     if not isinstance(txt, str):
         return txt
     parts = txt.split("vec:", 1)
     regular_query = parts[0].strip()
     if len(parts) > 1:
         vec_query = parts[1].strip()
-        note_ids = manager.search(vec_query, n_results=100)
-        card_ids = manager.note_ids_to_card_ids(note_ids)
-        return f"{regular_query} (" + " OR ".join(f"cid:{cid}" for cid in card_ids) + ")"
+        note_ids = manager.search(vec_query, n_results=n)
+        return f"{regular_query} (" + " OR ".join(f"nid:{nid}" for nid in note_ids) + ")"
     return regular_query
 
 if IN_ANKI:
@@ -139,12 +132,12 @@ if IN_ANKI:
 
     def patched_table_search(self, txt: str) -> None:
         global manager
-        transformed_txt = wrap_vec_search(txt)
+        transformed_txt = wrap_vec_search(txt, config['search_results_limit'])
+        print("GOT ", transformed_txt)
         return _original_table_search(self, transformed_txt)
 
     def init_hook():
         global manager, config, _original_table_search
-
         config = mw.addonManager.getConfig("ankivec")
         manager = VectorEmbeddingManager(config["model_name"], mw.col.path)
 
@@ -162,5 +155,3 @@ if IN_ANKI:
         pass
 
     hooks.notes_will_be_deleted.append(handle_deleted)
-else:
-    VectorEmbeddingManager("nomic-embed-text", "/Users/sam/Library/Application Support/Anki2/User 1/collection.anki2")
