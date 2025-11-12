@@ -167,4 +167,19 @@ if IN_ANKI:
     def handle_deleted(_, note_ids):
         manager.delete_notes(note_ids)
 
+    def handle_saved(_, note):
+        card_text = " ".join(note.fields)
+        joined_text = "search_document: " + card_text
+        try:
+            embedding = ollama.embed(model=manager.model_name, input=joined_text)["embeddings"][0]
+            manager.db.execute(
+                "INSERT OR REPLACE INTO ankivec_vec (note_id, embedding) VALUES (?, ?)",
+                (note.id, serialize_float32(embedding))
+            )
+            manager.conn.commit()
+        except:
+            print(f"FAILED TO EMBED note {note.id}")
+
     hooks.notes_will_be_deleted.append(handle_deleted)
+    hooks.note_will_be_added.append(handle_saved)
+    hooks.note_did_update_fields.append(handle_saved)
