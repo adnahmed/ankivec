@@ -37,15 +37,18 @@ class VectorEmbeddingManager:
         self._init_tables()
         self._sync()
 
+    def __del__(self):
+        self.conn.close()
+
     def _init_tables(self):
-        self.db.execute("drop table ankivec_vec")
-        self.db.execute("drop table ankivec_metadata")
+        self.db.execute("drop table if exists ankivec_vec")
+        self.db.execute("drop table if exists ankivec_metadata")
         self.conn.commit()
 
         self.db.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS ankivec_vec USING vec0(
                 note_id INTEGER PRIMARY KEY,
-                embedding float[1024] distance_metric=cosine
+                embedding float[1024]
             )
         """)
         self.db.execute("""
@@ -64,29 +67,15 @@ class VectorEmbeddingManager:
         stored_max_mod = stored_max_mod_row[0] if stored_max_mod_row else 0
         if notes_max_mod <= stored_max_mod: return
 
-        total = self.db.execute("SELECT COUNT() FROM notes").fetchone()[0]
-        if total == 0: return
-
-        if IN_ANKI:
-            progress = QProgressDialog("Syncing cards to vector database...", "Cancel", 0, total, mw)
-            progress.setWindowModality(Qt.WindowModality.WindowModal)
-            progress.setWindowTitle("AnkiVec Sync")
-            progress.setValue(0)
-        else:
-            progress = None
-
         notes_to_add = self.db.execute("SELECT id, flds FROM notes WHERE id NOT IN (SELECT note_id FROM ankivec_vec)")
-
-        self.add_cards(notes_to_add, progress)
-        if progress: progress.close()
+        self.add_cards(notes_to_add)
 
         # Store the latest modification time
         self.db.execute("INSERT OR REPLACE INTO ankivec_metadata (key, value) VALUES (?, ?)",
                        ("notes_max_mod", notes_max_mod))
         self.conn.commit()
 
-    def add_cards(self, notes, progress=None):
-        processed = 0
+    def add_cards(self, notes):
         for batch in itertools.batched(notes, 128):
             note_ids, card_text = zip(*batch)
             joined_text = [" ".join(c.split(chr(0x1f))) for c in card_text]
@@ -98,14 +87,9 @@ class VectorEmbeddingManager:
                     (note_id, serialize_float32(embedding))
                 )
 
-            if progress:
-                processed += len(batch)
-                progress.setValue(processed)
-                if progress.wasCanceled():
-                    break
         self.conn.commit()
 
-    def search(self, query: str, n_results: int = 20) -> List[int]:
+    def search(self, query: str, n_results: int = 20) -> list[int]:
         embedding = ollama.embed(model=self.model_name, input='query: ' + query)["embeddings"][0]
 
         self.db.execute(
@@ -133,7 +117,6 @@ if IN_ANKI:
     def patched_table_search(self, txt: str) -> None:
         global manager
         transformed_txt = wrap_vec_search(txt, config['search_results_limit'])
-        print("GOT ", transformed_txt)
         return _original_table_search(self, transformed_txt)
 
     def init_hook():
