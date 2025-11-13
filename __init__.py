@@ -32,7 +32,6 @@ if IN_ANKI:
     # Hack to make anki use the virtual environment
     sys.path.append(os.path.join(ADDON_ROOT_DIR, ".venv/lib/python3.13/site-packages/"))
 
-
 import sqlite3
 import sqlite_vec
 from sqlite_vec import serialize_float32
@@ -79,6 +78,8 @@ class VectorEmbeddingManager:
         if self.model_name != stored_model_name:
             if IN_ANKI:
                 tooltip("Model changed. Reindexing all cards...", parent=mw)
+            self.db.execute("drop table ankivec_vec")
+            self._init_tables()
             stored_mod = 0
 
         # Check if notes table has been modified since last sync
@@ -176,11 +177,6 @@ if IN_ANKI:
             _original_table_search = Table.search
             Table.search = patched_table_search
 
-    def handle_config_update():
-        global manager, config
-        manager.reindex_all()
-        tooltip("Model changed. Reindexing all cards...", parent=mw)
-
     gui_hooks.main_window_did_init.append(init_hook)
     gui_hooks.browser_will_show.append(browser_did_init)
 
@@ -190,15 +186,13 @@ if IN_ANKI:
     def handle_saved(note):
         card_text = " ".join(note.fields)
         joined_text = "search_document: " + card_text
-        try:
-            embedding = ollama.embed(model=manager.model_name, input=joined_text)["embeddings"][0]
-            manager.db.execute(
-                "INSERT INTO ankivec_vec (note_id, embedding) VALUES (?, ?)",
-                (note.id, serialize_float32(embedding))
-            )
-            manager.conn.commit()
-        except:
-            print(f"FAILED TO EMBED note {note.id}")
+        embedding = ollama.embed(model=manager.model_name, input=joined_text)["embeddings"][0]
+        manager.db.execute("delete from ankivec_vec where note_id = ?", (note.id,))
+        manager.db.execute(
+            "INSERT INTO ankivec_vec (note_id, embedding) VALUES (?, ?)",
+            (note.id, serialize_float32(embedding))
+        )
+        manager.conn.commit()
 
     hooks.notes_will_be_deleted.append(handle_deleted)
     hooks.note_will_be_added.append(handle_saved)
