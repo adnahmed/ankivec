@@ -60,14 +60,12 @@ class VectorEmbeddingManager:
 
     def _sync(self):
         # Check if notes table has been modified since last sync
-        notes_max_mod = self.db.execute("SELECT MAX(mod) FROM notes").fetchone()[0]
-        if notes_max_mod is None: return
-        stored_max_mod_row = self.db.execute("SELECT value FROM ankivec_metadata WHERE key = ?", ("notes_max_mod",)).fetchone()
-        stored_max_mod = stored_max_mod_row[0] if stored_max_mod_row else 0
-        if notes_max_mod <= stored_max_mod: return
-
-        total = self.db.execute("SELECT COUNT() FROM notes").fetchone()[0]
-        notes_to_add = self.db.execute("SELECT id, flds FROM notes")
+        stored_mod_row = self.db.execute("SELECT value FROM ankivec_metadata WHERE key = ?", ("notes_max_mod",)).fetchone()
+        stored_mod = stored_mod_row[0] if stored_mod_row else 0
+        total, notes_mod = self.db.execute("SELECT COUNT(), max(mod) FROM notes where mod > ?", (stored_mod,)).fetchone()
+        if total == 0: return
+        self.db.execute("delete from ankivec_vec where note_id in (SELECT id FROM notes where mod > ?)", (stored_mod,))
+        notes_to_add = self.db.execute("SELECT id, flds FROM notes where mod > ?", (stored_mod,))
 
         if IN_ANKI:
             progress = QProgressDialog("Syncing cards to vector database...", "Cancel", 0, total, mw)
@@ -76,19 +74,18 @@ class VectorEmbeddingManager:
             progress.setValue(0)
         else:
             progress = None
+            sys.stdout.write(f"Syncing {total} Cards: ")
+            sys.stdout.flush()
         self.add_cards(notes_to_add, progress)
 
         # Store the latest modification time
         self.db.execute("INSERT OR REPLACE INTO ankivec_metadata (key, value) VALUES (?, ?)",
-                       ("notes_max_mod", notes_max_mod))
+                       ("notes_max_mod", notes_mod))
         self.conn.commit()
 
     def add_cards(self, notes, progress):
         processed = 0
         writer = self.conn.cursor()
-        if not progress:
-            sys.stdout.write("Syncing Cards: ")
-            sys.stdout.flush()
         for batch in itertools.batched(notes, 128):
             note_ids, card_text = zip(*batch)
             joined_text = ["search_document: " + " ".join(c.split(chr(0x1f))) for c in card_text]
@@ -99,7 +96,7 @@ class VectorEmbeddingManager:
                 processed += len(batch)
                 continue
             writer.executemany(
-                "INSERT OR REPLACE INTO ankivec_vec (note_id, embedding) VALUES (?, ?)",
+                "INSERT INTO ankivec_vec (note_id, embedding) VALUES (?, ?)",
                 list(zip(note_ids, map(serialize_float32, embeddings)))
             )
             processed += len(batch)
@@ -117,13 +114,11 @@ class VectorEmbeddingManager:
 
     def search(self, query: str, n_results: int = 20) -> list[int]:
         embedding = ollama.embed(model=self.model_name, input='search_query: ' + query)["embeddings"][0]
-
         self.db.execute(
             "SELECT note_id FROM ankivec_vec WHERE embedding MATCH ? and k = ?",
             (serialize_float32(embedding), n_results)
         )
         results = self.db.fetchall()
-
         return [row[0] for row in results]
 
     def delete_notes(self, note_ids: list[int]) -> None:
@@ -173,7 +168,7 @@ if IN_ANKI:
         try:
             embedding = ollama.embed(model=manager.model_name, input=joined_text)["embeddings"][0]
             manager.db.execute(
-                "INSERT OR REPLACE INTO ankivec_vec (note_id, embedding) VALUES (?, ?)",
+                "INSERT INTO ankivec_vec (note_id, embedding) VALUES (?, ?)",
                 (note.id, serialize_float32(embedding))
             )
             manager.conn.commit()
