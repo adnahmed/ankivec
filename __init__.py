@@ -26,6 +26,7 @@ import itertools
 class VectorEmbeddingManager:
     def __init__(self, model_name: str, embedding_size: int, db_path: str):
         self.model_name = model_name
+        self.embedding_size = embedding_size
 
         # Use direct sqlite3 connection to Anki's database
         self.conn = sqlite3.connect(db_path)
@@ -33,13 +34,13 @@ class VectorEmbeddingManager:
         sqlite_vec.load(self.conn)
         self.conn.enable_load_extension(False)
         self.db = self.conn.cursor()
-        self._init_tables(embedding_size)
+        self._init_tables()
         self._sync()
 
     def __del__(self):
         self.conn.close()
 
-    def _init_tables(self, embedding_size: int):
+    def _init_tables(self):
         # self.db.execute("drop table if exists ankivec_vec")
         # self.db.execute("drop table if exists ankivec_metadata")
         # self.conn.commit()
@@ -47,7 +48,7 @@ class VectorEmbeddingManager:
         self.db.execute(f"""
             CREATE VIRTUAL TABLE IF NOT EXISTS ankivec_vec USING vec0(
                 note_id INTEGER PRIMARY KEY,
-                embedding float[{embedding_size}]
+                embedding float[{self.embedding_size}]
             )
         """)
         self.db.execute("""
@@ -82,6 +83,13 @@ class VectorEmbeddingManager:
         self.db.execute("INSERT OR REPLACE INTO ankivec_metadata (key, value) VALUES (?, ?)",
                        ("notes_max_mod", notes_mod))
         self.conn.commit()
+
+    def reindex_all(self):
+        self.db.execute("drop table ankivec_vec")
+        self.db.execute("drop table ankivec_metadata")
+        self.conn.commit()
+        self._init_tables()
+        self._sync()
 
     def add_cards(self, notes, progress):
         processed = 0
@@ -156,8 +164,18 @@ if IN_ANKI:
             _original_table_search = Table.search
             Table.search = patched_table_search
 
+    def handle_config_update(new_config):
+        global manager, config
+        old_model = config.get("model_name")
+        config = new_config
+        if old_model != config["model_name"]:
+            manager.reindex_all()
+            tooltip("Model changed. Reindexing all cards...", parent=mw)
+
     gui_hooks.main_window_did_init.append(init_hook)
     gui_hooks.browser_will_show.append(browser_did_init)
+    gui_hooks.addon_config_editor_will_save_changes.append(lambda config_data, addon_name:
+        handle_config_update(config_data) if addon_name == "ankivec" else None)
 
     def handle_deleted(_, note_ids):
         manager.delete_notes(note_ids)
