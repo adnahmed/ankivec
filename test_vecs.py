@@ -1,4 +1,5 @@
 import tempfile
+import os
 import pytest
 from pathlib import Path
 from ankivec import VectorEmbeddingManager
@@ -20,7 +21,7 @@ class MockAnkiDB:
 @pytest.fixture
 def manager():
     import sqlite3
-    db_path = "/Users/sam/Library/Application Support/Anki2/TestUser/collection.anki2"
+    db_path = os.path.abspath("test_collection.ank2")
     conn = sqlite3.connect(db_path)
     with tempfile.TemporaryDirectory() as temp_dir:
         yield VectorEmbeddingManager("nomic-embed-text", temp_dir, db = MockAnkiDB(conn))

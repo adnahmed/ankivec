@@ -5,7 +5,7 @@ from pathlib import Path
 try:
     from aqt import mw, gui_hooks
     from aqt.qt import *
-    from aqt.utils import tooltip
+    from aqt.utils import tooltip, showWarning
     from anki import hooks
     IN_ANKI = True
 except ImportError:
@@ -34,18 +34,36 @@ if IN_ANKI:
 import chromadb
 import ollama
 import itertools
+import requests
 
 class VectorEmbeddingManager:
     def __init__(self, model_name: str, collection_path: str, db):
         self.model_name = model_name
         self.db = db
-
+        self.embed_text("") # check if ollama is running
         self.client = chromadb.PersistentClient(path=collection_path)
         self.collection = self.client.get_or_create_collection(
             name="ankivec",
             metadata={"model_name": model_name}
         )
         self._sync()
+
+    def embed_text(self, text):
+        try:
+            return ollama.embed(model=self.model_name, input=text)['embeddings']
+        except (requests.exceptions.ConnectionError, requests.exceptions.RequestException):
+            error_msg = "Ollama is not running or not installed. Please install Ollama from https://ollama.ai and ensure it's running."
+            if IN_ANKI:
+                showWarning(error_msg)
+            raise RuntimeError(error_msg)
+        except Exception as e:
+            if "model" in str(e).lower() and "not found" in str(e).lower():
+                error_msg = f"Model '{self.model_name}' not found. Please run: ollama pull {self.model_name}"
+                if IN_ANKI:
+                    from aqt.utils import showWarning
+                    showWarning(error_msg)
+                raise RuntimeError(error_msg)
+            raise
 
     def _sync(self):
         stored_model_name = self.collection.metadata.get("model_name")
@@ -87,18 +105,10 @@ class VectorEmbeddingManager:
         for batch in itertools.batched(notes, 128):
             note_ids, card_text = zip(*batch)
             joined_text = ["search_document: " + " ".join(c.split(chr(0x1f))) for c in card_text]
-            try:
-                embeddings = ollama.embed(model=self.model_name, input=joined_text)["embeddings"]
-            except:
-                print("FAILED TO EMBED\n:", card_text)
-                processed += len(batch)
-                continue
-
+            embeddings = self.embed_text(joined_text)
             self.collection.upsert(
                 ids=[str(i) for i in note_ids],
-                embeddings=embeddings
-            )
-
+                embeddings=embeddings)
             processed += len(batch)
             if progress:
                 progress.setValue(processed)
@@ -113,11 +123,10 @@ class VectorEmbeddingManager:
             print("")
 
     def search(self, query: str, n_results: int = 20) -> list[int]:
-        embeddings = ollama.embed(model=self.model_name, input='search_query: ' + query)["embeddings"]
+        embeddings = self.embed_text('search_query: ' + query)
         results = self.collection.query(
             query_embeddings=embeddings,
-            n_results=n_results
-        )
+            n_results=n_results)
         return [int(id) for id in results["ids"][0]]
 
     def delete_notes(self, note_ids: list[int]) -> None:
@@ -164,7 +173,21 @@ if IN_ANKI:
     def handle_saved(note):
         card_text = " ".join(note.fields)
         joined_text = "search_document: " + card_text
-        embedding = ollama.embed(model=manager.model_name, input=joined_text)["embeddings"][0]
+        try:
+            embedding = ollama.embed(model=manager.model_name, input=joined_text)["embeddings"][0]
+        except requests.exceptions.ConnectionError:
+            error_msg = "Lost connection to Ollama. Please ensure Ollama is running."
+            from aqt.utils import showWarning
+            showWarning(error_msg)
+            return
+        except Exception as e:
+            if "model" in str(e).lower() and "not found" in str(e).lower():
+                error_msg = f"Model '{manager.model_name}' not found. Please run: ollama pull {manager.model_name}"
+                from aqt.utils import showWarning
+                showWarning(error_msg)
+                return
+            print("Failed to embed note:", e)
+            return
         manager.collection.upsert(
             ids=[str(note.id)],
             embeddings=[embedding],
@@ -172,5 +195,5 @@ if IN_ANKI:
         )
 
     hooks.notes_will_be_deleted.append(handle_deleted)
-    hooks.note_will_be_added.append(handle_saved)
+    hooks.note_will_be_added.append(lambda c, n, d: handle_saved(n))
     hooks.note_will_flush.append(handle_saved)
