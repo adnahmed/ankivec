@@ -105,10 +105,13 @@ class VectorEmbeddingManager:
         for batch in itertools.batched(notes, 128):
             note_ids, card_text = zip(*batch)
             joined_text = ["search_document: " + " ".join(c.split(chr(0x1f))) for c in card_text]
-            embeddings = self.embed_text(joined_text)
-            self.collection.upsert(
-                ids=[str(i) for i in note_ids],
-                embeddings=embeddings)
+            try:
+                embeddings = self.embed_text(joined_text)
+                self.collection.upsert(
+                    ids=[str(i) for i in note_ids],
+                    embeddings=embeddings)
+            except:
+                print(f"Failed to add : {card_text}")
             processed += len(batch)
             if progress:
                 progress.setValue(processed)
