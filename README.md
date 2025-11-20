@@ -36,3 +36,11 @@ There are three parameters that govern how `AnkiVec` operates, available in the 
 - **model_name**: The name of the Ollama model to use for generating embeddings. The default is "nomic-embed-text", but you can specify any model supported by Ollama (for example, "kronos483/MedEmbed-large-v0.1" for a specialized medical model).
 - **search_results_limit**: The maximum number of search results to return. Default is 20.
 - **ollama_host**: The URL of the Ollama server. Default is "http://localhost:11434".
+
+## Future Plans
+
+- **Other Platforms**: Currently, only Mac OS is supported. Windows support should be straightforward if I can get my hands on a Windows machine. Linux support is more tricky, as the `uv` binary bundled with Anki will be installed in different places depending on your distribution. I need to investigate how Anki is distributed in different package managers. 
+
+- **Ordering by Relevance**: Currently, Anki's search feature allows you to filter the cards you seen in the Browser, but not to order them by a specific relevance score. Implementing this as an add on might require obscene amounts of monkey patching, but I think it will be worth the effort.
+
+- **Debugging Ollama**: Ollama can be buggy. A small fraction of Anki notes cause Ollama to throw an error when generating embeddings. This is a known issue, and I'm working on figuring out what's going on.
