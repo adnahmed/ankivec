@@ -28,3 +28,11 @@ Pull the embedding model:
 ```bash
 ollama pull nomic-embed-text
 ```
+
+## Configuration
+
+There are three parameters that govern how `AnkiVec` operates, available in the add-on's configuration dialog:
+
+- **model_name**: The name of the Ollama model to use for generating embeddings. The default is "nomic-embed-text", but you can specify any model supported by Ollama (for example, "kronos483/MedEmbed-large-v0.1" for a specialized medical model).
+- **search_results_limit**: The maximum number of search results to return. Default is 20.
+- **ollama_host**: The URL of the Ollama server. Default is "http://localhost:11434".
