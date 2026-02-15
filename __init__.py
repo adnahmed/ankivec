@@ -2,10 +2,10 @@ import sys
 import os
 from pathlib import Path
 
-# Load vendored pure-Python dependencies
-# The vendor directory is relative to this file's location
+# Add vendor directory to path for runtime dependencies
+# Dependencies are vendored using: pip install -r requirements-runtime.txt -t vendor
 _addon_root = Path(__file__).parent
-_vendor_dir = _addon_root / "src" / "vendor"
+_vendor_dir = _addon_root / "vendor"
 if str(_vendor_dir) not in sys.path:
     sys.path.insert(0, str(_vendor_dir))
 
@@ -17,68 +17,6 @@ try:
     IN_ANKI = True
 except ImportError:
     IN_ANKI = False
-
-if IN_ANKI:
-    import platform
-    import subprocess
-    system = platform.system()
-    ADDON_ROOT_DIR = Path(__file__).parent
-
-    # Install dependencies with uv
-    if system == "Windows":
-        # Try to get uv path from environment variable set by Anki launcher
-        uv_path = os.environ.get("ANKI_LAUNCHER_UV")
-        if not uv_path:
-            # Fallback to default Windows Anki installation location
-            anki_program_files = Path(os.environ.get("LOCALAPPDATA", "")) / "AnkiProgramFiles" / "uv.exe"
-            if anki_program_files.exists():
-                uv_path = str(anki_program_files)
-            else:
-                raise RuntimeError(
-                    "Could not find uv executable. Please ensure Anki is installed correctly. "
-                    "If Anki is installed in a non-standard location, set ANKI_LAUNCHER_UV environment variable."
-                )
-    elif system == "Darwin":
-        uv_path = "/Applications/Anki.app/Contents/MacOS/uv"
-    elif system == "Linux":
-        # Try environment variable first, then check standard locations
-        uv_path = os.environ.get("ANKI_LAUNCHER_UV")
-        if not uv_path:
-            raise RuntimeError(
-                "Could not find uv executable on Linux. "
-                "Please set ANKI_LAUNCHER_UV environment variable or ensure Anki is installed."
-            )
-    else:
-        raise RuntimeError(f"Unsupported operating system: {system}")
-    
-    subprocess.check_call([uv_path, "sync", "--project", str(ADDON_ROOT_DIR)], cwd=str(ADDON_ROOT_DIR))
-
-    # Add the virtual environment's site-packages to the path
-    # Handle both Windows (.venv\Lib\site-packages) and Unix (.venv/lib/pythonX.Y/site-packages)
-    venv_dir = ADDON_ROOT_DIR / ".venv"
-    if system == "Windows":
-        site_packages = venv_dir / "Lib" / "site-packages"
-    else:
-        # On Unix systems, find the site-packages directory dynamically
-        lib_dir = venv_dir / "lib"
-        if lib_dir.exists():
-            # Get the first (and usually only) python version directory
-            python_dirs = list(lib_dir.glob("python*"))
-            if python_dirs:
-                site_packages = python_dirs[0] / "site-packages"
-            else:
-                site_packages = lib_dir / "site-packages"
-        else:
-            site_packages = lib_dir / "site-packages"
-    
-    if site_packages.exists():
-        sys.path.append(str(site_packages))
-    else:
-        import warnings
-        warnings.warn(
-            f"Virtual environment site-packages not found at {site_packages}. "
-            f"Dependencies may not be available. Please run 'uv sync' manually in the addon directory."
-        )
 
 import chromadb
 import ollama

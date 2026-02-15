@@ -1,0 +1,6 @@
+# Runtime dependencies for AnkiVec addon
+# These are vendored into the addon package to avoid conflicts with Anki's environment
+# Install with: pip install -r requirements-runtime.txt -t vendor
+
+ollama>=0.1.0
+chromadb>=0.4.0
