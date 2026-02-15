@@ -186,6 +186,35 @@ class VectorEmbeddingManager:
 
 if IN_ANKI:
     _original_table_search = None
+    _ADDON_ID = "1516019916"
+    _LEGACY_CONFIG_KEY = "ankivec"
+    _DEFAULT_CONFIG = {
+        "model_name": "nomic-embed-text",
+        "search_results_limit": 20,
+        "ollama_host": "http://localhost:11434",
+    }
+
+    def _get_addon_config(addon_id: str):
+        manager = mw.addonManager
+        if hasattr(manager, "getConfig"):
+            return manager.getConfig(addon_id)
+        if hasattr(manager, "get_config"):
+            return manager.get_config(addon_id)
+        return None
+
+    def _set_addon_config(addon_id: str, config_data: dict) -> None:
+        manager = mw.addonManager
+        if hasattr(manager, "setConfig"):
+            manager.setConfig(addon_id, config_data)
+            return
+        if hasattr(manager, "writeConfig"):
+            manager.writeConfig(addon_id, config_data)
+            return
+        if hasattr(manager, "set_config"):
+            manager.set_config(addon_id, config_data)
+            return
+        if IN_ANKI:
+            showWarning("Could not persist AnkiVec config: no config setter found in AddonManager.")
 
     def wrap_vec_search(txt, n):
         if not isinstance(txt, str):
@@ -200,17 +229,26 @@ if IN_ANKI:
 
     def patched_table_search(self, txt: str) -> None:
         global manager
-        transformed_txt = wrap_vec_search(txt, config['search_results_limit'])
+        transformed_txt = wrap_vec_search(txt, config.get("search_results_limit", _DEFAULT_CONFIG["search_results_limit"]))
         return _original_table_search(self, transformed_txt)
 
     def init_hook():
         global manager, config, _original_table_search
-        config = mw.addonManager.getConfig("ankivec")
+        config = _get_addon_config(_ADDON_ID)
+        legacy_config = None
         if config is None:
-            config = {"model_name": "nomic-embed-text", "search_results_limit": 20}
-            mw.addonManager.setConfig("ankivec", config)
+            legacy_config = _get_addon_config(_LEGACY_CONFIG_KEY)
+        if config is None:
+            config = legacy_config
+        if config is None:
+            config = dict(_DEFAULT_CONFIG)
+        else:
+            merged = dict(_DEFAULT_CONFIG)
+            merged.update(config)
+            config = merged
+        _set_addon_config(_ADDON_ID, config)
         collection_path = str(Path(mw.col.path).parent / "ankivec_chromadb")
-        manager = VectorEmbeddingManager(config["model_name"], collection_path, mw.col.db)
+        manager = VectorEmbeddingManager(config.get("model_name", _DEFAULT_CONFIG["model_name"]), collection_path, mw.col.db)
 
     def browser_did_init(browser):
         global _original_table_search
