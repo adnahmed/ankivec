@@ -2,6 +2,13 @@ import sys
 import os
 from pathlib import Path
 
+# Load vendored pure-Python dependencies
+# The vendor directory is relative to this file's location
+_addon_root = Path(__file__).parent
+_vendor_dir = _addon_root / "src" / "vendor"
+if str(_vendor_dir) not in sys.path:
+    sys.path.insert(0, str(_vendor_dir))
+
 try:
     from aqt import mw, gui_hooks
     from aqt.qt import *
@@ -19,17 +26,59 @@ if IN_ANKI:
 
     # Install dependencies with uv
     if system == "Windows":
-        raise NotImplementedError("Windows is not yet supported")
+        # Try to get uv path from environment variable set by Anki launcher
+        uv_path = os.environ.get("ANKI_LAUNCHER_UV")
+        if not uv_path:
+            # Fallback to default Windows Anki installation location
+            anki_program_files = Path(os.environ.get("LOCALAPPDATA", "")) / "AnkiProgramFiles" / "uv.exe"
+            if anki_program_files.exists():
+                uv_path = str(anki_program_files)
+            else:
+                raise RuntimeError(
+                    "Could not find uv executable. Please ensure Anki is installed correctly. "
+                    "If Anki is installed in a non-standard location, set ANKI_LAUNCHER_UV environment variable."
+                )
     elif system == "Darwin":
         uv_path = "/Applications/Anki.app/Contents/MacOS/uv"
     elif system == "Linux":
-        raise NotImplementedError("Linux is not yet supported")
+        # Try environment variable first, then check standard locations
+        uv_path = os.environ.get("ANKI_LAUNCHER_UV")
+        if not uv_path:
+            raise RuntimeError(
+                "Could not find uv executable on Linux. "
+                "Please set ANKI_LAUNCHER_UV environment variable or ensure Anki is installed."
+            )
     else:
-        raise NotImplementedError("Unknown system")
+        raise RuntimeError(f"Unsupported operating system: {system}")
+    
     subprocess.check_call([uv_path, "sync", "--project", str(ADDON_ROOT_DIR)], cwd=str(ADDON_ROOT_DIR))
 
-    # Hack to make anki use the virtual environment
-    sys.path.append(os.path.join(ADDON_ROOT_DIR, ".venv/lib/python3.13/site-packages/"))
+    # Add the virtual environment's site-packages to the path
+    # Handle both Windows (.venv\Lib\site-packages) and Unix (.venv/lib/pythonX.Y/site-packages)
+    venv_dir = ADDON_ROOT_DIR / ".venv"
+    if system == "Windows":
+        site_packages = venv_dir / "Lib" / "site-packages"
+    else:
+        # On Unix systems, find the site-packages directory dynamically
+        lib_dir = venv_dir / "lib"
+        if lib_dir.exists():
+            # Get the first (and usually only) python version directory
+            python_dirs = list(lib_dir.glob("python*"))
+            if python_dirs:
+                site_packages = python_dirs[0] / "site-packages"
+            else:
+                site_packages = lib_dir / "site-packages"
+        else:
+            site_packages = lib_dir / "site-packages"
+    
+    if site_packages.exists():
+        sys.path.append(str(site_packages))
+    else:
+        import warnings
+        warnings.warn(
+            f"Virtual environment site-packages not found at {site_packages}. "
+            f"Dependencies may not be available. Please run 'uv sync' manually in the addon directory."
+        )
 
 import chromadb
 import ollama
@@ -157,6 +206,9 @@ if IN_ANKI:
     def init_hook():
         global manager, config, _original_table_search
         config = mw.addonManager.getConfig("ankivec")
+        if config is None:
+            config = {"model_name": "nomic-embed-text", "search_results_limit": 20}
+            mw.addonManager.setConfig("ankivec", config)
         collection_path = str(Path(mw.col.path).parent / "ankivec_chromadb")
         manager = VectorEmbeddingManager(config["model_name"], collection_path, mw.col.db)
 

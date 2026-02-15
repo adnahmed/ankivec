@@ -1,0 +1,12 @@
+{
+  "package": "1516019916",
+  "name": "AnkiVec",
+  "type": "addon",
+  "version": "0.1.0",
+  "author": "ankivec contributors",
+  "description": "Vector embedding search for Anki using Ollama and ChromaDB",
+  "homepage": "https://github.com/you/ankivec",
+  "conflicts": [],
+  "minVersion": "2.1.45",
+  "maxVersion": "24.11"
+}
